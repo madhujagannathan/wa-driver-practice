@@ -1,11 +1,11 @@
 // Question bank — every question is written from the Washington Driver Guide (DOL, 2025 edition).
 // Each question cites the guide section (`ref`) and PDF page (`page`). `fact` is the flashcard takeaway.
-import ch1 from './data/ch1-licenses.js';
-import ch2 from './data/ch2-vehicles.js';
-import ch3 from './data/ch3-drivers.js';
-import ch4a from './data/ch4a-sharing.js';
-import ch4b from './data/ch4b-rules.js';
-import ch5 from './data/ch5-risks.js';
+import ch1 from './data/ch1-licenses.js?v=3';
+import ch2 from './data/ch2-vehicles.js?v=3';
+import ch3 from './data/ch3-drivers.js?v=3';
+import ch4a from './data/ch4a-sharing.js?v=3';
+import ch4b from './data/ch4b-rules.js?v=3';
+import ch5 from './data/ch5-risks.js?v=3';
 
 export const GUIDE_EDITION = 'Washington Driver Guide, 2025 edition';
 

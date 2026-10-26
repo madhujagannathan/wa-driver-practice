@@ -1,6 +1,6 @@
-import { TOPICS, QUESTIONS, GUIDE_EDITION } from './questions.js';
-import { SIGNS } from './signs.js';
-import { store } from './store.js';
+import { TOPICS, QUESTIONS, GUIDE_EDITION } from './questions.js?v=3';
+import { SIGNS } from './signs.js?v=3';
+import { store } from './store.js?v=3';
 
 const PASS_RATE = 0.8;      // Real WA test: 32 of 40 correct
 const TEST_LENGTH = 40;
