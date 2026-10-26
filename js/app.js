@@ -1,6 +1,6 @@
-import { TOPICS, QUESTIONS, GUIDE_EDITION } from './questions.js?v=3';
-import { SIGNS } from './signs.js?v=3';
-import { store } from './store.js?v=3';
+import { TOPICS, QUESTIONS, GUIDE_EDITION } from './questions.js?v=4';
+import { SIGNS } from './signs.js?v=4';
+import { store } from './store.js?v=4';
 
 const PASS_RATE = 0.8;      // Real WA test: 32 of 40 correct
 const TEST_LENGTH = 40;
@@ -93,7 +93,7 @@ function renderGate() {
           <span class="thumb" aria-hidden="true"></span>
         </div>
         <h2 class="form-title">Sign in to keep practicing</h2>
-        <div class="field"><label for="u">Username</label><input id="u" name="u" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+        <div class="field"><label for="u">Username</label><input id="u" name="u" autocomplete="username" autocapitalize="none" spellcheck="false" required><span class="help">A short name like maya_k, not an email address.</span></div>
         <div class="field"><label for="p">Password</label><input id="p" name="p" type="password" autocomplete="current-password" required></div>
         <div class="reveal" data-student-field><div>
           <div class="field"><label for="s">Your student’s username</label><input id="s" name="s" autocapitalize="none" spellcheck="false"><span class="help">The parent view follows this student’s progress.</span></div>
@@ -128,6 +128,12 @@ function renderGate() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = new FormData(form);
+    if (String(f.get('u')).includes('@')) {
+      err.textContent = mode === 'signup'
+        ? 'Pick a short username instead of an email address, like maya_k.'
+        : `Sign in with your username, not an email address. If you signed up as “${String(f.get('u')).split('@')[0]}”, type just that.`;
+      return;
+    }
     try {
       submit.disabled = true;
       session = mode === 'signup'
