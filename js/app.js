@@ -1,6 +1,6 @@
-import { TOPICS, QUESTIONS, GUIDE_EDITION } from './questions.js?v=4';
-import { SIGNS } from './signs.js?v=4';
-import { store } from './store.js?v=4';
+import { TOPICS, QUESTIONS, GUIDE_EDITION } from './questions.js?v=5';
+import { SIGNS } from './signs.js?v=5';
+import { store } from './store.js?v=5';
 
 const PASS_RATE = 0.8;      // Real WA test: 32 of 40 correct
 const TEST_LENGTH = 40;
@@ -93,13 +93,20 @@ function renderGate() {
           <span class="thumb" aria-hidden="true"></span>
         </div>
         <h2 class="form-title">Sign in to keep practicing</h2>
-        <div class="field"><label for="u">Username</label><input id="u" name="u" autocomplete="username" autocapitalize="none" spellcheck="false" required><span class="help">A short name like maya_k, not an email address.</span></div>
-        <div class="field"><label for="p">Password</label><input id="p" name="p" type="password" autocomplete="current-password" required></div>
-        <div class="reveal" data-student-field><div>
+        <div class="field"><label for="e" data-email-label>Email</label><input id="e" name="e" type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" required><span class="help" data-email-help></span></div>
+        <div class="reveal" data-show="signup-student"><div>
+          <div class="field"><label for="u">Username</label><input id="u" name="u" autocomplete="username" autocapitalize="none" spellcheck="false"><span class="help">A short name like maya_k. It’s shown in the app, and a parent uses it to link to your progress.</span></div>
+        </div></div>
+        <div class="reveal open" data-show="password"><div>
+          <div class="field"><label for="p">Password</label><input id="p" name="p" type="password" autocomplete="current-password"></div>
+        </div></div>
+        <div class="reveal" data-show="signup-parent"><div>
           <div class="field"><label for="s">Your student’s username</label><input id="s" name="s" autocapitalize="none" spellcheck="false"><span class="help">The parent view follows this student’s progress.</span></div>
         </div></div>
         <p class="error" role="alert"></p>
+        <p class="notice" role="status"></p>
         <button class="btn" type="submit">Sign in</button>
+        <p class="switch forgot-line" data-show="signin"><button type="button" class="linkish" data-forgot>Forgot password?</button></p>
         <p class="switch"><span class="switch-text">New here?</span> <button type="button" class="linkish" data-toggle>Create an account</button></p>
       </form>
     </section>
@@ -109,36 +116,54 @@ function renderGate() {
   const seg = form.querySelector('.seg');
   const err = form.querySelector('.error');
   const submit = form.querySelector('[type=submit]');
+  const notice = form.querySelector('.notice');
+  const show = (key, on) => form.querySelectorAll(`[data-show="${key}"]`).forEach((el) => {
+    if (el.classList.contains('reveal')) el.classList.toggle('open', on); else el.hidden = !on;
+  });
   const sync = () => {
     seg.classList.toggle('right', role === 'parent');
     seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.role === role)));
     const creating = mode === 'signup';
-    form.querySelector('.form-title').textContent = creating
-      ? (role === 'student' ? 'Create your student account' : 'Create a parent account')
+    const resetting = mode === 'reset';
+    seg.hidden = resetting;
+    form.querySelector('.form-title').textContent = resetting ? 'Reset your password'
+      : creating ? (role === 'student' ? 'Create your student account' : 'Create a parent account')
       : (role === 'student' ? 'Sign in to keep practicing' : 'Sign in to see progress');
-    submit.textContent = creating ? 'Create account' : 'Sign in';
-    form.querySelector('.switch-text').textContent = creating ? 'Already have an account?' : 'New here?';
-    form.querySelector('[data-toggle]').textContent = creating ? 'Sign in' : 'Create an account';
+    form.querySelector('[data-email-help]').textContent = resetting
+      ? 'We’ll email a link to choose a new password. Your progress stays saved.'
+      : creating
+        ? 'Password-reset links go here. A student can use a parent’s Gmail with a +name, like you+maya@gmail.com.'
+        : 'Made your account with just a username? Type the username here instead.';
+    form.querySelector('[data-email-label]').textContent = creating || resetting ? 'Email' : 'Email (or username)';
+    form.querySelector('#e').type = creating || resetting ? 'email' : 'text';
+    submit.textContent = resetting ? 'Email me a reset link' : creating ? 'Create account' : 'Sign in';
+    form.querySelector('.switch-text').textContent = creating ? 'Already have an account?' : resetting ? 'Remembered it?' : 'New here?';
+    form.querySelector('[data-toggle]').textContent = creating || resetting ? 'Sign in' : 'Create an account';
     form.querySelector('#p').autocomplete = creating ? 'new-password' : 'current-password';
-    form.querySelector('[data-student-field]').classList.toggle('open', creating && role === 'parent');
+    show('password', !resetting);
+    show('signup-student', creating && role === 'student');
+    show('signup-parent', creating && role === 'parent');
+    show('signin', mode === 'signin');
     err.textContent = '';
+    notice.textContent = '';
   };
   seg.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { role = b.dataset.role; sync(); } });
   form.querySelector('[data-toggle]').addEventListener('click', () => { mode = mode === 'signin' ? 'signup' : 'signin'; sync(); });
+  form.querySelector('[data-forgot]').addEventListener('click', () => { mode = 'reset'; sync(); form.querySelector('#e').focus(); });
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = new FormData(form);
-    if (String(f.get('u')).includes('@')) {
-      err.textContent = mode === 'signup'
-        ? 'Pick a short username instead of an email address, like maya_k.'
-        : `Sign in with your username, not an email address. If you signed up as “${String(f.get('u')).split('@')[0]}”, type just that.`;
-      return;
-    }
+    err.textContent = ''; notice.textContent = '';
     try {
       submit.disabled = true;
+      if (mode === 'reset') {
+        await store.resetPassword(f.get('e'));
+        notice.textContent = `If ${String(f.get('e')).trim()} has an account, a reset link is on its way. Check the spam folder if it doesn’t arrive in a few minutes.`;
+        return;
+      }
       session = mode === 'signup'
-        ? await store.signUp({ role, username: f.get('u'), password: f.get('p'), student: f.get('s') })
-        : await store.signIn({ username: f.get('u'), password: f.get('p') });
+        ? await store.signUp({ role, email: f.get('e'), username: f.get('u'), password: f.get('p'), student: f.get('s') })
+        : await store.signIn({ username: f.get('e'), password: f.get('p') });
       location.hash = '#/';
       route();
     } catch (ex) {

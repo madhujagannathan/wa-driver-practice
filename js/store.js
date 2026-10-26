@@ -2,10 +2,11 @@
 // With a Firebase config present, accounts live in Firebase Auth and progress in Firestore, so a
 // student's progress follows them to any device and a linked parent account can read it.
 // Without one, everything falls back to this browser's localStorage.
-import { firebaseConfig } from './firebase-config.js?v=4';
+import { firebaseConfig } from './firebase-config.js?v=5';
 
 const EMPTY = () => ({ answers: {}, missed: [], tests: [] });
 const clean = (u) => (u || '').trim().toLowerCase();
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function validate({ username, password }) {
   if (!/^[a-z0-9._-]{3,24}$/.test(username)) throw new Error('Usernames are 3–24 letters, numbers, dots or dashes.');
@@ -14,7 +15,7 @@ function validate({ username, password }) {
 
 // ───────────────────────── Firebase backend ─────────────────────────
 async function firebaseBackend() {
-  const fb = await import('./vendor/firebase.js?v=4');
+  const fb = await import('./vendor/firebase.js?v=5');
   const app = fb.initializeApp(firebaseConfig);
   const auth = fb.getAuth(app);
   const db = fb.getFirestore(app);
@@ -28,9 +29,10 @@ async function firebaseBackend() {
 
   const friendly = (e) => {
     const code = e?.code || '';
-    if (code.includes('email-already-in-use')) return new Error('That username is taken. Sign in instead, or pick another.');
-    if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found') || code.includes('invalid-email'))
-      return new Error('Username or password doesn’t match. Check both and try again.');
+    if (code.includes('email-already-in-use')) return new Error('That email already has an account. Sign in instead, or use “Forgot password?”.');
+    if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found'))
+      return new Error('Email or password doesn’t match. Check both and try again, or use “Forgot password?”.');
+    if (code.includes('invalid-email')) return new Error('That email address doesn’t look right. Check it and try again.');
     if (code.includes('too-many-requests')) return new Error('Too many tries. Wait a minute, then try again.');
     if (code.includes('network')) return new Error('Can’t reach the server. Check your internet connection and try again.');
     if (code.includes('weak-password')) return new Error('Passwords need at least 6 characters.');
@@ -83,45 +85,62 @@ async function firebaseBackend() {
     onStatus(fn) { listeners.add(fn); },
     session: () => session,
 
-    async signUp({ role, username, password, student }) {
-      username = clean(username);
-      validate({ username, password });
+    // Students pick a username (shown in the app and used by a parent to link) plus an email for
+    // password resets. Parents sign up with an email and their student's username.
+    async signUp({ role, email, username, password, student }) {
+      email = (email || '').trim().toLowerCase();
+      if (!EMAIL.test(email)) throw new Error('Enter a real email address. Password-reset links are sent there.');
+      if ((password || '').length < 6) throw new Error('Passwords need at least 6 characters.');
+      username = role === 'student' ? clean(username) : email;
+      if (role === 'student' && !/^[a-z0-9._-]{3,24}$/.test(username)) throw new Error('Usernames are 3–24 letters, numbers, dots or dashes.');
       const studentName = clean(student);
       if (role === 'parent' && !studentName) throw new Error('Enter your student’s username to link their progress.');
       let cred;
-      try { cred = await fb.createUserWithEmailAndPassword(auth, emailFor(username), password); } catch (e) { throw friendly(e); }
+      try { cred = await fb.createUserWithEmailAndPassword(auth, email, password); } catch (e) { throw friendly(e); }
       const uid = cred.user.uid;
+      const undo = async (message) => { await fb.deleteUser(cred.user).catch(() => {}); throw new Error(message); };
       try {
         let watches = null;
         if (role === 'parent') {
           const s = await fb.getDoc(fb.doc(db, 'usernames', studentName));
-          if (!s.exists() || s.data().role !== 'student') {
-            await fb.deleteUser(cred.user).catch(() => {});
-            throw new Error('No student account with that username yet. Create the student account first.');
-          }
+          if (!s.exists() || s.data().role !== 'student') await undo('No student account with that username yet. Create the student account first.');
           watches = s.data().uid;
+        } else {
+          const taken = await fb.getDoc(fb.doc(db, 'usernames', username));
+          if (taken.exists()) await undo('That username is taken. Pick another one.');
+          await fb.setDoc(fb.doc(db, 'usernames', username), { uid, role });
         }
-        await fb.setDoc(fb.doc(db, 'usernames', username), { uid, role });
-        await fb.setDoc(fb.doc(db, 'users', uid), { username, role, watches, watchesName: role === 'parent' ? studentName : null, created: Date.now() });
+        await fb.setDoc(fb.doc(db, 'users', uid), { username, role, email, watches, watchesName: role === 'parent' ? studentName : null, created: Date.now() });
         if (role === 'student') await fb.setDoc(fb.doc(db, 'progress', uid), EMPTY());
         session = { username, role, watches: role === 'parent' ? studentName : null, uid, watchesUid: watches };
         uidOf.set(username, uid);
         if (role === 'student') cache.set(username, EMPTY());
         return session;
       } catch (e) {
-        if (e.message?.startsWith('No student')) throw e;
+        if (!e.code) throw e;
         throw friendly(e);
       }
     },
 
-    async signIn({ username, password }) {
-      username = clean(username);
+    // Sign in with an email. A plain username still works for accounts made before emails were used.
+    async signIn({ username: id, password }) {
+      id = (id || '').trim().toLowerCase();
+      const email = id.includes('@') ? id : emailFor(id);
       try {
-        const cred = await fb.signInWithEmailAndPassword(auth, emailFor(username), password);
+        const cred = await fb.signInWithEmailAndPassword(auth, email, password);
         const s = await loadProfile(cred.user);
-        if (!s) throw new Error('This account isn’t set up completely. Create it again with a new username.');
+        if (!s) throw new Error('This account isn’t set up completely. Create a new account.');
         return s;
       } catch (e) { throw e.code ? friendly(e) : e; }
+    },
+
+    async resetPassword(email) {
+      email = (email || '').trim().toLowerCase();
+      if (!EMAIL.test(email)) throw new Error('Enter the email address you signed up with.');
+      try { await fb.sendPasswordResetEmail(auth, email); } catch (e) {
+        if ((e.code || '').includes('user-not-found')) return; // don't reveal which emails have accounts
+        throw friendly(e);
+      }
     },
 
     async signOut() { session = null; cache.clear(); await fb.signOut(auth).catch(() => {}); },
@@ -157,9 +176,9 @@ function localBackend() {
     ready: Promise.resolve(),
     onStatus() {},
     session: () => read(K.session, null),
-    async signUp({ role, username, password, student }) {
-      username = clean(username);
-      validate({ username, password });
+    async signUp({ role, email, username, password, student }) {
+      username = role === 'student' ? clean(username) : clean(email);
+      if (role === 'student') validate({ username, password });
       const users = read(K.users, {});
       if (users[username]) throw new Error('That username is taken. Sign in instead, or pick another.');
       let watches = null;
@@ -182,6 +201,7 @@ function localBackend() {
       return s;
     },
     async signOut() { try { localStorage.removeItem(K.session); } catch { /* ignore */ } },
+    async resetPassword() { throw new Error('Password resets need the online account system, which isn’t connected.'); },
     async loadWatched() { return this.progress(this.session()?.watches); },
     progress(username) { return { ...EMPTY(), ...read(K.progress(username), {}) }; },
     recordAnswer(username, qid, correct, opts) {
