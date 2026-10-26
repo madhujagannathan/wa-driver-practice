@@ -2,7 +2,7 @@
 // With a Firebase config present, accounts live in Firebase Auth and progress in Firestore, so a
 // student's progress follows them to any device and a linked parent account can read it.
 // Without one, everything falls back to this browser's localStorage.
-import { firebaseConfig } from './firebase-config.js?v=5';
+import { firebaseConfig } from './firebase-config.js?v=6';
 
 const EMPTY = () => ({ answers: {}, missed: [], tests: [] });
 const clean = (u) => (u || '').trim().toLowerCase();
@@ -15,7 +15,7 @@ function validate({ username, password }) {
 
 // ───────────────────────── Firebase backend ─────────────────────────
 async function firebaseBackend() {
-  const fb = await import('./vendor/firebase.js?v=5');
+  const fb = await import('./vendor/firebase.js?v=6');
   const app = fb.initializeApp(firebaseConfig);
   const auth = fb.getAuth(app);
   const db = fb.getFirestore(app);

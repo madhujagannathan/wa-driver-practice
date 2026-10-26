@@ -1,6 +1,6 @@
-import { TOPICS, QUESTIONS, GUIDE_EDITION } from './questions.js?v=5';
-import { SIGNS } from './signs.js?v=5';
-import { store } from './store.js?v=5';
+import { TOPICS, QUESTIONS, GUIDE_EDITION } from './questions.js?v=6';
+import { SIGNS } from './signs.js?v=6';
+import { store } from './store.js?v=6';
 
 const PASS_RATE = 0.8;      // Real WA test: 32 of 40 correct
 const TEST_LENGTH = 40;
@@ -618,5 +618,16 @@ store.onStatus((st) => {
   el.textContent = st === 'error' ? 'Couldn’t save the last answer. Check your connection; it will retry with your next answer.' : st === 'saving' ? 'Saving…' : 'All progress saved to this account.';
   el.classList.toggle('sync-error', st === 'error');
 });
+// If a newer version has been published, load it. GitHub Pages lets browsers reuse a cached
+// page for up to 10 minutes, so without this someone could keep using an older build.
+const APP_VERSION = '6';
+fetch('version.json', { cache: 'no-store' }).then((r) => r.json()).then(({ v }) => {
+  const url = new URL(location.href);
+  if (v && v !== APP_VERSION && url.searchParams.get('v') !== v) {
+    url.searchParams.set('v', v);
+    location.replace(url.toString());
+  }
+}).catch(() => {});
+
 await store.ready;
 route();
