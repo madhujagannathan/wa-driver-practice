@@ -4,6 +4,7 @@ import { store } from './store.js';
 
 const PASS_RATE = 0.8;      // Real WA test: 32 of 40 correct
 const TEST_LENGTH = 40;
+const ROUND_SIZE = 15;       // questions per practice or review round
 const LETTERS = ['A', 'B', 'C', 'D', 'E'];
 
 const app = document.getElementById('app');
@@ -13,9 +14,10 @@ const topicName = (id) => TOPICS.find((t) => t.id === id)?.name ?? id;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
+const thumb = (q) => (q.sign && SIGNS[q.sign] ? `<span class="thumb-sign" aria-hidden="false">${SIGNS[q.sign]}</span>` : '');
 const when = (t) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-let session = store.session();
+let session = null;
 let run = null; // the active quiz
 
 // ───────────────────────── Stats ─────────────────────────
@@ -35,7 +37,7 @@ const icons = {
 function shell(active, inner) {
   const s = session;
   const p = s.role === 'student' ? store.progress(s.username) : null;
-  const missed = p ? p.missed.length : 0;
+  const missed = p ? p.missed.filter((id) => byId[id]).length : 0;
   const nav = s.role === 'student'
     ? [
         ['#/', 'Home', 'home'],
@@ -55,7 +57,7 @@ function shell(active, inner) {
       <div class="rail-foot">
         <div class="who-line">Signed in as <span class="who">${esc(s.username)}</span>${s.role === 'parent' ? ' (parent)' : ''}</div>
         <button class="linkish" data-action="signout">Sign out</button>
-        <p class="preview-note">Preview build. Progress is saved on this device for now; syncing across devices comes next.</p>
+        <p class="preview-note" data-sync>${store.mode === 'synced' ? 'Progress is saved to this account and follows you to any device.' : 'Progress is saved in this browser only.'}</p>
       </div>
     </aside>
     <main class="main" id="main"><div class="page enter">${inner}</div></main>
@@ -76,6 +78,7 @@ function renderGate() {
       <div class="facts">
         <div><b class="num">40</b>questions on the test</div>
         <div><b class="num">80%</b>needed to pass</div>
+        <div><b class="num">${QUESTIONS.length}</b>practice questions here</div>
       </div>
       <svg class="road" viewBox="0 0 300 300" aria-hidden="true">
         <path d="M60 300 C 120 200, 200 160, 300 120" stroke="rgba(0,0,0,.25)" stroke-width="90" fill="none"/>
@@ -159,7 +162,7 @@ function guideSign(progress, { clickable, who = 'you' }) {
         </${tag}></li>`;
       }).join('')}
     </ul>
-    <div class="sign-foot">${QUESTIONS.length} questions in this preview, from the ${GUIDE_EDITION}.</div>
+    <div class="sign-foot">${QUESTIONS.length} questions, all from the ${GUIDE_EDITION}.</div>
   </section>`;
 }
 
@@ -173,7 +176,7 @@ function renderHome() {
     ${guideSign(p, { clickable: true })}
     <div class="modes">
       <a class="mode" href="#/test">${icons.test}<b>Take a mock test</b><span>${testLen} questions, like the real thing. ${Math.ceil(testLen * PASS_RATE)} correct to pass.</span></a>
-      <a class="mode" href="#/review" ${p.missed.length ? '' : 'aria-disabled="true"'}>${icons.review}<b>Review mistakes</b><span>${p.missed.length ? `${p.missed.length} question${p.missed.length === 1 ? '' : 's'} to fix` : 'Nothing to fix yet'}</span></a>
+      <a class="mode" href="#/review" ${mistakeLog(p).length ? '' : 'aria-disabled="true"'}>${icons.review}<b>Review mistakes</b><span>${mistakeLog(p).length ? `${toFix(p).length} to fix, ${mistakeLog(p).length} in your mistake log` : 'Nothing to review yet'}</span></a>
       <a class="mode" href="#/cards">${icons.cards}<b>Flashcards</b><span>Key numbers and rules, one at a time</span></a>
     </div>
     ${last ? `<p class="last-test">Last mock test: <b class="num">${last.score}/${last.total}</b> — ${last.passed ? 'passed' : 'not yet a pass'}, ${when(last.at)}.</p>` : ''}
@@ -217,7 +220,7 @@ function practiceOrder(topic) {
   const p = store.progress(session.username);
   const pool = QUESTIONS.filter((q) => topic === 'all' || q.topic === topic);
   const rank = (q) => { const a = p.answers[q.id]; return !a ? 1 : a.last === 'wrong' ? 0 : 2; };
-  return shuffle(pool).sort((a, b) => rank(a) - rank(b)).map((q) => q.id);
+  return shuffle(pool).sort((a, b) => rank(a) - rank(b)).slice(0, ROUND_SIZE).map((q) => q.id);
 }
 
 function choiceHTML(item, q, k, pos) {
@@ -339,7 +342,7 @@ function finish() {
           <div class="score num">${correct}<small>/ ${total}</small></div>
         </section>
         ${wrong.length ? `<div class="section"><h2>What you missed</h2><ul class="review-list">
-          ${wrong.map((x) => { const q = byId[x.id]; return `<li><div class="q">${esc(q.q)}</div><div class="a">You chose “${esc(q.choices[x.picked])}”. Answer: <b>${esc(q.choices[q.answer])}</b>. ${esc(q.why)} <span class="muted">(Section ${q.ref}, p. ${q.page})</span></div></li>`; }).join('')}
+          ${wrong.map((x) => { const q = byId[x.id]; return `<li>${thumb(q)}<div><div class="q">${esc(q.q)}</div><div class="a">You chose “${esc(q.choices[x.picked])}”. Answer: <b>${esc(q.choices[q.answer])}</b>. ${esc(q.why)} <span class="muted">(Section ${q.ref}, p. ${q.page})</span></div></div></li>`; }).join('')}
         </ul></div>` : ''}
         <div class="actions">
           <button class="btn" data-go="#/test/run">Take another test</button>
@@ -355,11 +358,11 @@ function finish() {
     <div class="result">
       <section class="sign drop">
         <div><div class="verdict-big">${r.kind === 'review' ? 'Review done' : 'Round done'}</div>
-          <div class="sign-sub">${r.label}${r.kind === 'review' ? ` — ${left ? `${left} still need another look` : 'every mistake fixed'}` : ''}</div></div>
+          <div class="sign-sub">${r.label}${r.kind === 'review' ? `. ${left ? `${left} still to fix.` : 'Every mistake is fixed.'}` : ''}</div></div>
         <div class="score num">${correct}<small>/ ${done.length}</small></div>
       </section>
       <div class="actions">
-        ${r.kind === 'review' && left ? '<button class="btn" data-go="#/review">Review again</button>' : ''}
+        ${r.kind === 'review' ? `<button class="btn" data-go="#/review/${r.which}" ${r.which === 'fix' && !left ? 'disabled' : ''}>Another review round</button>` : ''}
         ${r.kind === 'practice' ? `<button class="btn" data-again>Practice again</button>` : ''}
         <button class="btn secondary" data-go="#/">Home</button>
       </div>
@@ -373,7 +376,7 @@ function renderTestIntro() {
   app.innerHTML = shell('test', `
     <h1>Mock test</h1>
     <p class="lede">The real test has 40 questions and you need 32 right. This one works the same way: no hints along the way, your score and every miss at the end.</p>
-    ${n < TEST_LENGTH ? `<p class="empty">The preview has ${QUESTIONS.length} questions, so this test uses all of them and asks for ${Math.ceil(n * PASS_RATE)} correct. The full version draws 40 at random.</p>` : ''}
+    <p class="muted">Each test draws ${n} questions at random from all ${QUESTIONS.length}, spread across every topic.</p>
     <div class="actions"><button class="btn" data-go="#/test/run">Start the test</button></div>
   `);
 }
@@ -383,17 +386,59 @@ function startTest() {
   startRun('test', ids, 'Mock test');
 }
 
-function startReview() {
+// Every question ever answered wrong, most-missed first. This log never clears.
+function mistakeLog(p) {
+  return Object.entries(p.answers)
+    .filter(([id, a]) => byId[id] && a.wrong > 0)
+    .sort((a, b) => b[1].wrong - a[1].wrong || (b[1].at || 0) - (a[1].at || 0))
+    .map(([id, a]) => ({ id, ...a }));
+}
+const toFix = (p) => p.missed.filter((id) => byId[id]);
+
+function renderReview() {
   const p = store.progress(session.username);
-  if (!p.missed.length) {
+  const fix = toFix(p);
+  const log = mistakeLog(p);
+  if (!log.length) {
     app.innerHTML = shell('review', `
       <h1>Review mistakes</h1>
-      <p class="lede">Anything you get wrong lands here. Answer it right and it leaves the list.</p>
-      <p class="empty">No mistakes to review. Try a topic or a mock test, and missed questions will show up here.</p>
+      <p class="lede">Anything you get wrong lands here, so you can come back to it.</p>
+      <p class="empty">No mistakes yet. Try a topic or a mock test, and missed questions will show up here.</p>
       <div class="actions"><button class="btn" data-go="#/practice">Practice a topic</button></div>`);
     return;
   }
-  startRun('review', shuffle(p.missed.filter((id) => byId[id])), 'Review mistakes');
+  app.innerHTML = shell('review', `
+    <h1>Review mistakes</h1>
+    <p class="lede">Two ways to go back over what you missed.</p>
+    <div class="topics review-choices">
+      <button class="topic" data-go="#/review/fix" ${fix.length ? '' : 'disabled'}>
+        <span class="shield shield-amber num">${fix.length}</span>
+        <span><b>Still to fix</b><span>${fix.length ? 'Missed and not yet answered right. Each one leaves this list when you get it right.' : 'All caught up. Every mistake has been answered right since.'}</span></span>
+        <span></span>
+      </button>
+      <button class="topic" data-go="#/review/all">
+        <span class="shield num">${log.length}</span>
+        <span><b>Everything you’ve missed</b><span>Every question you’ve ever gotten wrong, including ones you’ve since fixed.</span></span>
+        <span></span>
+      </button>
+    </div>
+    <div class="section"><h2>Your mistake log</h2>
+      <p class="muted" style="margin-top:-6px">Most-missed first. This list keeps everything, even after you get a question right.</p>
+      <ul class="review-list log">
+        ${log.map((a) => { const q = byId[a.id]; const open = p.missed.includes(a.id); return `<li class="${open ? '' : 'fixed'}">${thumb(q)}<div>
+          <div class="q">${esc(q.q)}</div>
+          <div class="a">Missed ${a.wrong} time${a.wrong === 1 ? '' : 's'}${a.right ? `, right ${a.right}` : ''}. ${open ? '<span class="pill fail">Still to fix</span>' : '<span class="pill pass">Fixed</span>'}<br>Answer: <b>${esc(q.choices[q.answer])}</b> <span class="muted">(Section ${q.ref}, p. ${q.page})</span></div>
+        </div></li>`; }).join('')}
+      </ul>
+    </div>`);
+}
+
+function startReview(which) {
+  const p = store.progress(session.username);
+  const ids = which === 'all' ? mistakeLog(p).map((a) => a.id) : toFix(p);
+  if (!ids.length) { location.hash = '#/review'; return; }
+  startRun('review', shuffle(ids).slice(0, ROUND_SIZE), which === 'all' ? 'Everything you’ve missed' : 'Still to fix');
+  run.which = which;
 }
 
 // ───────────────────────── Flashcards ─────────────────────────
@@ -422,7 +467,7 @@ function renderCards() {
     const paint = () => {
       card.classList.remove('flipped');
       card.innerHTML = `
-        <div class="face front"><span class="tag">${esc(topicName(q.topic))}</span><div class="q">${esc(q.q)}</div><span class="flip-hint">Tap or press space to flip</span></div>
+        <div class="face front">${q.sign && SIGNS[q.sign] ? `<div class="card-sign">${SIGNS[q.sign]}</div>` : ''}<span class="tag">${esc(topicName(q.topic))}</span><div class="q">${esc(q.q)}</div><span class="flip-hint">Tap or press space to flip</span></div>
         <div class="face back"><span class="tag">Answer: ${esc(q.choices[q.answer])}</span><div class="fact">${esc(q.fact)}</div><span class="tag">Section ${q.ref}, page ${q.page}</span></div>`;
       card.setAttribute('aria-label', 'Flashcard. Press to flip.');
       app.querySelector('[data-pos]').textContent = `${i + 1} of ${deck.length}`;
@@ -449,7 +494,9 @@ function renderCards() {
 let cardKeys = null;
 
 // ───────────────────────── Parent view ─────────────────────────
-function renderParent() {
+async function renderParent() {
+  app.innerHTML = shell('home', '<p class="muted">Loading progress…</p>');
+  try { await store.loadWatched(); } catch { app.innerHTML = shell('home', '<h1>Couldn’t load progress</h1><p class="lede">Check your internet connection, then refresh the page.</p>'); return; }
   const kid = session.watches;
   const p = store.progress(kid);
   const answered = Object.keys(p.answers).length;
@@ -467,7 +514,7 @@ function renderParent() {
       <div class="stat"><b>${answered}<span class="muted" style="font-size:.6em"> / ${QUESTIONS.length}</span></b><span>Questions tried</span></div>
       <div class="stat"><b>${p.tests.length}</b><span>Mock tests taken</span></div>
       <div class="stat"><b>${p.tests.length ? best + '%' : '—'}</b><span>Best mock test</span></div>
-      <div class="stat"><b>${p.missed.length}</b><span>Mistakes to review</span></div>
+      <div class="stat"><b>${p.missed.length}</b><span>Mistakes still to fix</span></div>
     </div>
     <div class="section"><h2>Mock tests</h2>
       ${p.tests.length ? `<table class="table"><thead><tr><th>When</th><th>Score</th><th>Result</th></tr></thead><tbody>
@@ -475,7 +522,7 @@ function renderParent() {
       </tbody></table>` : '<p class="empty">No mock tests yet.</p>'}
     </div>
     <div class="section"><h2>Trickiest questions</h2>
-      ${weak.length ? `<ul class="review-list">${weak.map(([id, a]) => { const q = byId[id]; return `<li><div class="q">${esc(q.q)}</div><div class="a">Missed ${a.wrong} time${a.wrong === 1 ? '' : 's'}, right ${a.right}. ${a.last === 'right' ? 'Got it right most recently.' : 'Still missing it.'} Answer: <b>${esc(q.choices[q.answer])}</b></div></li>`; }).join('')}</ul>`
+      ${weak.length ? `<ul class="review-list">${weak.map(([id, a]) => { const q = byId[id]; return `<li>${thumb(q)}<div><div class="q">${esc(q.q)}</div><div class="a">Missed ${a.wrong} time${a.wrong === 1 ? '' : 's'}, right ${a.right}. ${a.last === 'right' ? 'Got it right most recently.' : 'Still missing it.'} Answer: <b>${esc(q.choices[q.answer])}</b></div></div></li>`; }).join('')}</ul>`
         : '<p class="empty">No missed questions so far.</p>'}
     </div>`);
 }
@@ -498,7 +545,8 @@ function route() {
   if (a === 'practice') return renderTopics();
   if (a === 'test' && b === 'run') return startTest();
   if (a === 'test') return renderTestIntro();
-  if (a === 'review') return startReview();
+  if (a === 'review' && (b === 'fix' || b === 'all')) return startReview(b);
+  if (a === 'review') return renderReview();
   if (a === 'cards') return renderCards();
   renderHome();
 }
@@ -518,7 +566,7 @@ app.addEventListener('click', (e) => {
     if (run && run.kind !== 'test' && run.items.some((x) => x.picked !== null)) { run.items = run.items.filter((x) => x.picked !== null); return finish(); }
     run = null; location.hash = '#/'; return;
   }
-  if (act === 'signout') { store.signOut(); location.hash = '#/'; route(); }
+  if (act === 'signout') { store.signOut().then(() => { location.hash = '#/'; route(); }); }
 });
 
 document.addEventListener('keydown', (e) => {
@@ -533,4 +581,11 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('hashchange', route);
+store.onStatus((st) => {
+  const el = document.querySelector('[data-sync]');
+  if (!el) return;
+  el.textContent = st === 'error' ? 'Couldn’t save the last answer. Check your connection; it will retry with your next answer.' : st === 'saving' ? 'Saving…' : 'All progress saved to this account.';
+  el.classList.toggle('sync-error', st === 'error');
+});
+await store.ready;
 route();
